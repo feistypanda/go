@@ -79,6 +79,34 @@ const BoardState = (() => {
 			return state;
 		}
 
+		static validateCoords (state, x, y) {
+			return x >= 0 && x < state.columns && y >= 0 && y < state.rows;
+		}
+
+		static cleanUpSplitState (split) {
+			let res = [];
+			let final = [];
+
+			for (const i of split) {
+				let type = i.slice(-1);
+				let num = +i.slice(0, -1);
+				res.push([num, type]);
+			}
+
+			for (let i = 0; i < res.length; i ++) {
+				if (final.length > 0 && final[final.length - 1][1] === res[i][1]) final[final.length - 1][0] += res[i][0];
+				else if (res[i][0] > 0) final.push(res[i]);
+			}
+
+			final = final.map(x => x[0] + x[1]);
+
+			return final.join("");
+		}
+
+		static cleanUpState (state) {
+			return BoardState.cleanUpSplitState(BoardState.splitState(state));
+		}
+
 		constructor (config) {
 			this.#rows = config.rows;
 			this.#columns = config.columns;
@@ -121,6 +149,54 @@ const BoardState = (() => {
 
 		get splitState () {
 			return BoardState.splitState(this.state);
+		}
+
+		setAtCoords (x, y, type) {
+			if (!BoardState.validateCoords(this, x, y)) throw "invalid coords";
+
+			if ((typeof type) !== "string") throw "type must be a string";
+			if (type.length !== 1) throw "type must have length 1";
+			if (type.match(/[^wbn]/)) throw "type must be char w, b, or n";
+
+			let split = this.splitState;
+			let newSplit = [];
+
+			let target = y * this.columns + x;
+
+			let curInd = 0;
+
+			let done = false;
+
+			for (let i = 0; i < split.length; i ++) {
+				let curType = split[i].slice(-1);
+				let num = +split[i].slice(0, -1);
+
+				if (curInd + num > target && !done) {
+
+					done = true;
+
+					let diff = target - curInd;
+
+					newSplit.push(diff + curType);
+					newSplit.push("1" + type);
+					newSplit.push((num - diff - 1) + curType);
+
+				} else {
+					newSplit.push(split[i]);
+				}
+
+				curInd += num;
+			}
+
+			this.state = BoardState.cleanUpSplitState(newSplit);
+		}
+
+		getAtCoords (x, y) {
+			if (!BoardState.validateCoords(this, x, y)) throw "invalid coords";
+
+			let target = y * this.columns + x;
+
+			return this.expandedState[target];
 		}
 	}
 
@@ -178,6 +254,10 @@ const BoardDisplayer = (() => {
 			return this.height/(this.rows + this.padding);
 		}
 
+		setAtCoords (x, y, type) {
+			this.#boardState.setAtCoords(x, y, type);
+		}
+
 		displayBackground () {
 			noStroke();
 			fill(200, 150, 150);
@@ -193,7 +273,7 @@ const BoardDisplayer = (() => {
 				line(this.x + this.startX, y, this.x + this.width - this.startX, y);
 			}
 
-			for (let i = 0; i < this.rows; i ++) {
+			for (let i = 0; i < this.columns; i ++) {
 				let x = this.x + this.startX + this.tileWidth * i;
 				line(x, this.y + this.startY, x, this.y + this.height - this.startY);
 			}
@@ -231,6 +311,54 @@ const BoardDisplayer = (() => {
 	}
 
 	return BoardDisplayer;
+})();
+
+const GameHandler = (() => {
+	class GameHandler {
+
+		#displayer = null;
+		#state = "0n";
+
+		#rows = 0;
+		#columns = 0;
+
+		constructor (config) {
+			this.displayer = config.displayer;
+
+			this.#rows = config.rows;
+			this.#columns = config.columns;
+			
+			this.state = new BoardState({
+				rows: this.#rows,
+				columns: this.#columns,
+			});
+		}
+
+		get rows () {
+			return this.#rows;
+		}
+
+		get columns () {
+			return this.#columns;
+		}
+
+		get displayer () {
+			return this.#displayer;
+		}
+
+		set displayer (displayer)  {
+			this.#displayer = displayer;
+		}
+
+		playMove (x, y, color) {
+			if (this.state.getAtCoords(x, y) === "n") {
+				this.state.setAtCoords(x, y, color);
+				this.displayer.boardState = this.state.state;
+			}
+		}
+	}
+
+	return GameHandler
 })();
 
 const scenes = (() => {
@@ -530,12 +658,36 @@ const scenes = (() => {
 })();
 
 scenes.play = (() => {
-	const boardDisplayer = new BoardDisplayer();
 
-	boardDisplayer.boardState = "9n9w9b9n2w2n2b3n9n9w9b9n";
+	const rows = 19;
+	const columns = rows;
+
+	const boardDisplayer = new BoardDisplayer({
+		rows,
+		columns,
+		width: 600 * SCALE,
+		height: 600 * SCALE,
+	});
+
+	const gameHandler = new GameHandler({
+		rows,
+		columns,
+		displayer: boardDisplayer,
+	})
+
+	// boardDisplayer.boardState = "4n";
 
 	return function () {
 		background(colors.white);
+
+
+		if (click) {
+			let type = "wb"[Math.floor(Math.random() * 2)];
+			let x = Math.floor(mouseX/600 * columns);
+			let y = Math.floor(mouseY/600 * rows);
+
+			gameHandler.playMove(x, y, type);
+		}
 
 		boardDisplayer.display();
 	}
