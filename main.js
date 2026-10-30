@@ -36,6 +36,7 @@ let click = false;
 let keys = {};
 
 const copyObj = obj => JSON.parse(JSON.stringify(obj));
+const clamp = (x, min, max) => Math.max(Math.min(x, max), min);
 
 const images = (() => {
 
@@ -207,15 +208,9 @@ const BoardDisplayer = (() => {
 	class BoardDisplayer {
 
 		#boardState = null;
+		#gameHandler = null; // gameHandler to get rows and columns from
 
 		constructor (config = {}) {
-			this.rows = config.rows ?? config.size ?? 9;
-			this.columns = config.columns ?? config.size ?? 9;
-
-			this.#boardState = new BoardState({
-				rows: this.rows,
-				columns: this.columns,
-			});
 
 			this.x = config.x ?? 0;
 			this.y = config.y ?? 0;
@@ -224,6 +219,22 @@ const BoardDisplayer = (() => {
 			this.height = config.height ?? 600 * SCALE;
 
 			this.padding = config.padding ?? 1;
+		}
+
+		set gameHandler (handler) {
+			this.#gameHandler = handler;
+
+			this.rows = handler.rows;
+			this.columns = handler.columns;
+
+			this.#boardState = new BoardState({
+				rows: handler.rows,
+				columns: handler.columns,
+			})
+		}
+
+		get gameHandler () {
+			return this.#gameHandler;
 		}
 
 		set boardState (newState) {
@@ -242,7 +253,24 @@ const BoardDisplayer = (() => {
 			return this.tileHeight * (0.5 + this.padding/2);
 		}
 
+		get gridX () {
+			return this.startX - this.tileWidth/2;
+		}
+
+		get gridY () {
+			return this.startY - this.tileHeight/2;
+		}
+
+		get gridWidth () {
+			return this.columns * this.tileWidth;
+		}
+
+		get gridHeight () {
+			return this.rows * this.tileHeight;
+		}
+
 		get expandedBoardState () {
+			if (!this.#boardState) throw "no board state";
 			return this.#boardState.expandedState;
 		}
 
@@ -252,10 +280,6 @@ const BoardDisplayer = (() => {
 
 		get tileHeight () {
 			return this.height/(this.rows + this.padding);
-		}
-
-		setAtCoords (x, y, type) {
-			this.#boardState.setAtCoords(x, y, type);
 		}
 
 		displayBackground () {
@@ -322,9 +346,9 @@ const GameHandler = (() => {
 		#rows = 0;
 		#columns = 0;
 
-		constructor (config) {
-			this.displayer = config.displayer;
+		#boardDisplayer = null;
 
+		constructor (config) {
 			this.#rows = config.rows;
 			this.#columns = config.columns;
 			
@@ -342,23 +366,71 @@ const GameHandler = (() => {
 			return this.#columns;
 		}
 
-		get displayer () {
-			return this.#displayer;
+		get boardDisplayer () {
+			return this.#boardDisplayer;
 		}
 
-		set displayer (displayer)  {
-			this.#displayer = displayer;
+		set boardDisplayer (displayer)  {
+			this.#boardDisplayer = displayer;
 		}
 
 		playMove (x, y, color) {
 			if (this.state.getAtCoords(x, y) === "n") {
 				this.state.setAtCoords(x, y, color);
-				this.displayer.boardState = this.state.state;
+				this.boardDisplayer.boardState = this.state.state;
 			}
 		}
 	}
 
-	return GameHandler
+	return GameHandler;
+})();
+
+const MoveHandler = (() => {
+	class MoveHandler {
+
+		#gameHandler = null; // To send moves to
+		#boardDisplayer = null; // To figure out input areas
+
+		constructor (config) {
+
+		}
+
+		set gameHandler (gameHandler) {
+			this.#gameHandler = gameHandler;
+		}
+
+		get gameHandler () {
+			return this.#gameHandler;
+		}
+
+		set boardDisplayer (boardDisplayer) {
+			this.#boardDisplayer = boardDisplayer;
+		}
+
+		get boardDisplayer () {
+			return this.#boardDisplayer;
+		}
+
+		update (mouseX, mouseY, click) {
+
+			let xPercent = (mouseX - this.boardDisplayer.gridX) / this.boardDisplayer.gridWidth;
+			let yPercent = (mouseY - this.boardDisplayer.gridY) / this.boardDisplayer.gridHeight;
+
+			let xInd = clamp(Math.floor(xPercent * this.boardDisplayer.columns), 0, this.boardDisplayer.columns - 1);
+			let yInd = clamp(Math.floor(yPercent * this.boardDisplayer.rows), 0, this.boardDisplayer.rows - 1);
+
+			noStroke();
+			fill(0, 50);
+			rect(this.boardDisplayer.gridX + this.boardDisplayer.tileWidth * xInd, 0, this.boardDisplayer.tileWidth, 600);
+			rect(0, this.boardDisplayer.gridY + this.boardDisplayer.tileHeight * yInd, 600, this.boardDisplayer.tileHeight);
+
+			if (!click) return;
+
+			this.gameHandler.playMove(xInd, yInd, "w");
+		}
+	}
+
+	return MoveHandler;
 })();
 
 const scenes = (() => {
@@ -662,34 +734,29 @@ scenes.play = (() => {
 	const rows = 19;
 	const columns = rows;
 
-	const boardDisplayer = new BoardDisplayer({
+	const gameHandler = new GameHandler({
 		rows,
 		columns,
+	})
+
+	const boardDisplayer = new BoardDisplayer({
 		width: 600 * SCALE,
 		height: 600 * SCALE,
 	});
 
-	const gameHandler = new GameHandler({
-		rows,
-		columns,
-		displayer: boardDisplayer,
-	})
+	const moveHandler = new MoveHandler();
 
-	// boardDisplayer.boardState = "4n";
+	gameHandler.boardDisplayer = boardDisplayer;
+	boardDisplayer.gameHandler = gameHandler;
+
+	moveHandler.gameHandler = gameHandler;
+	moveHandler.boardDisplayer = boardDisplayer;
 
 	return function () {
 		background(colors.white);
 
-
-		if (click) {
-			let type = "wb"[Math.floor(Math.random() * 2)];
-			let x = Math.floor(mouseX/600 * columns);
-			let y = Math.floor(mouseY/600 * rows);
-
-			gameHandler.playMove(x, y, type);
-		}
-
 		boardDisplayer.display();
+		moveHandler.update(mouseX, mouseY, click);
 	}
 })();
 
